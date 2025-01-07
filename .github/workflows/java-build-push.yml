@@ -1,0 +1,80 @@
+name: Build and Push Docker Image to ECR
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+
+    steps:
+      # Checkout the source code
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      # Set up Java environment for Maven
+      - name: Set up JDK 8
+        uses: actions/setup-java@v3
+        with:
+          java-version: '8'
+          distribution: 'temurin'
+
+      # Build the WAR file using Maven
+      - name: Build WAR file
+        run: mvn clean package -X
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: war-file
+          path: target/*.war
+
+      # Configure AWS Credentials
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Get AWS Account ID
+        run: |
+          aws_account_id=$(aws sts get-caller-identity --query "Account" --output text)
+          echo "AWS Account ID: $aws_account_id"
+
+      # Log in to Amazon ECR
+      - name: Log in to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v1
+
+      # Build the Docker image
+      - name: Build Docker Image
+        run: |
+          aws_account_id=$(aws sts get-caller-identity --query "Account" --output text)
+          region=${{ secrets.AWS_REGION }}
+          repository_name=java-tomcat
+          image_tag=$(date +%d%H%M)
+
+          # Validate variables
+          if [[ -z "$aws_account_id" || -z "$region" || -z "$repository_name" ]]; then
+          echo "Error: One or more required variables are not set."
+          exit 1
+          fi
+          docker build -t $aws_account_id.dkr.ecr.$region.amazonaws.com/$repository_name:$image_tag .
+          docker tag 077537906040.dkr.ecr.us-west-2.amazonaws.com/$repository_name:$image_tag 077537906040.dkr.ecr.us-west-2.amazonaws.com/$repository_name:latest
+          echo $image_tag > image-tag.txt
+        
+      # Push the Docker image to Amazon ECR
+      - name: Push Docker Image to ECR
+        run: |
+          aws_account_id=$(aws sts get-caller-identity --query "Account" --output text)
+          region=${AWS_REGION}
+          repository_name=java-tomcat
+          image_tag=$(date +%d%H%M)
+          docker push $aws_account_id.dkr.ecr.$region.amazonaws.com/$repository_name:$image_tag
